@@ -28,6 +28,7 @@ typedef struct {
 	uint32 total_len;
 	uint32 content_len;
 	struct espconn *conn;
+	ip_addr_t ip;
 	rboot_write_status write_status;
 } upgrade_status;
 
@@ -79,7 +80,7 @@ void ICACHE_FLASH_ATTR rboot_ota_deinit() {
 static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned short length) {
 	
 	char *ptrData, *ptrLen, *ptr;
-
+	
 	// disarm the timer
 	os_timer_disarm(&ota_timer);
 	
@@ -137,7 +138,9 @@ static void ICACHE_FLASH_ATTR upgrade_disconcb(void *arg) {
 	
 	os_timer_disarm(&ota_timer);
 	if (conn) {
-		if (conn->proto.tcp) os_free(conn->proto.tcp);
+		if (conn->proto.tcp) {
+			os_free(conn->proto.tcp);
+		}
 		os_free(conn);
 	}
 	
@@ -159,15 +162,14 @@ static void ICACHE_FLASH_ATTR upgrade_disconcb(void *arg) {
 static void ICACHE_FLASH_ATTR upgrade_connect_cb(void *arg) {
 	
 	uint8 *request;
-	uint8 ip[] = OTA_IP;
 	
 	// disable the timeout
 	os_timer_disarm(&ota_timer);
-
+	
 	// register connection callbacks
 	espconn_regist_disconcb(upgrade->conn, upgrade_disconcb);
 	espconn_regist_recvcb(upgrade->conn, upgrade_recvcb);
-
+	
 	// http request string
 	request = (uint8 *)os_malloc(512);
 	if (!request) {
@@ -176,9 +178,8 @@ static void ICACHE_FLASH_ATTR upgrade_connect_cb(void *arg) {
 		return;
 	}
 	os_sprintf((char*)request,
-		"GET /%s HTTP/1.1\r\nHost: " IPSTR "\r\n" HTTP_HEADER,
-		(upgrade->rom_slot == FLASH_BY_ADDR ? OTA_FILE : (upgrade->rom_slot == 0 ? OTA_ROM0 : OTA_ROM1)),
-		IP2STR(ip));
+		"GET /%s HTTP/1.1\r\nHost: " OTA_HOST "\r\n" HTTP_HEADER,
+		(upgrade->rom_slot == FLASH_BY_ADDR ? OTA_FILE : (upgrade->rom_slot == 0 ? OTA_ROM0 : OTA_ROM1)));
 	
 	// send the http request, with timeout for reply
 	os_timer_setfn(&ota_timer, (os_timer_func_t *)rboot_ota_deinit, 0);
@@ -198,27 +199,27 @@ static void ICACHE_FLASH_ATTR connect_timeout_cb() {
 static const char* ICACHE_FLASH_ATTR esp_errstr(sint8 err) {
 	switch(err) {
 		case ESPCONN_OK:
-			return "No error, everything OK.\r\n";
+			return "No error, everything OK.";
 		case ESPCONN_MEM:
-			return "Out of memory error.\r\n";
+			return "Out of memory error.";
 		case ESPCONN_TIMEOUT:
-			return "Timeout.\r\n";
+			return "Timeout.";
 		case ESPCONN_RTE:
-			return "Routing problem.\r\n";
+			return "Routing problem.";
 		case ESPCONN_INPROGRESS:
-			return "Operation in progress.\r\n";
+			return "Operation in progress.";
 		case ESPCONN_ABRT:
-			return "Connection aborted.\r\n";
+			return "Connection aborted.";
 		case ESPCONN_RST:
-			return "Connection reset.\r\n";
+			return "Connection reset.";
 		case ESPCONN_CLSD:
-			return "Connection closed.\r\n";
+			return "Connection closed.";
 		case ESPCONN_CONN:
-			return "Not connected.\r\n";
+			return "Not connected.";
 		case ESPCONN_ARG:
-			return "Illegal argument.\r\n";
+			return "Illegal argument.";
 		case ESPCONN_ISCONN:
-			return "Already connected.\r\n";
+			return "Already connected.";
 	}
 }
 
@@ -226,17 +227,50 @@ static const char* ICACHE_FLASH_ATTR esp_errstr(sint8 err) {
 static void ICACHE_FLASH_ATTR upgrade_recon_cb(void *arg, sint8 errType) {
 	uart0_send("Connection error: ");
 	uart0_send(esp_errstr(errType));
+	uart0_send("\r\n");
 	// not connected so don't call disconnect on the connection
 	// but call our own disconnect callback to do the cleanup
 	upgrade_disconcb(upgrade->conn);
+}
+
+// call back for dns lookup
+static void ICACHE_FLASH_ATTR upgrade_resolved(const char *name, ip_addr_t *ip, void *arg) {
+	
+	if (ip == 0) {
+		uart0_send("DNS lookup failed for: ");
+		uart0_send(OTA_HOST);
+		uart0_send("\r\n");
+		// not connected so don't call disconnect on the connection
+		// but call our own disconnect callback to do the cleanup
+		upgrade_disconcb(upgrade->conn);
+		return;
+	}
+	
+	// set up connection
+	upgrade->conn->type = ESPCONN_TCP;
+	upgrade->conn->state = ESPCONN_NONE;
+	upgrade->conn->proto.tcp->local_port = espconn_port();
+	upgrade->conn->proto.tcp->remote_port = OTA_PORT;
+	*(ip_addr_t*)upgrade->conn->proto.tcp->remote_ip = *ip;
+	// set connection call backs
+	espconn_regist_connectcb(upgrade->conn, upgrade_connect_cb);
+	espconn_regist_reconcb(upgrade->conn, upgrade_recon_cb);
+	
+	// try to connect
+	espconn_connect(upgrade->conn);
+	
+	// set connection timeout timer
+	os_timer_disarm(&ota_timer);
+	os_timer_setfn(&ota_timer, (os_timer_func_t *)connect_timeout_cb, 0);
+	os_timer_arm(&ota_timer, OTA_NETWORK_TIMEOUT, 0);
 }
 
 // start the ota process, with user supplied options
 bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 
 	uint8 slot;
-	uint8 ip[] = OTA_IP;
 	rboot_config bootconf;
+	err_t result;
 	
 	// check not already updating
 	if (system_upgrade_flag_check() == UPGRADE_FLAG_START) {
@@ -276,9 +310,8 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 	}
 	upgrade->conn->proto.tcp = (esp_tcp *)os_zalloc(sizeof(esp_tcp));
 	if (!upgrade->conn->proto.tcp) {
-		os_free(upgrade->conn);
-		upgrade->conn = 0;
 		uart0_send("No ram!\r\n");
+		os_free(upgrade->conn);
 		os_free(upgrade);
 		return false;
 	}
@@ -286,24 +319,21 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 	// set update flag
 	system_upgrade_flag_set(UPGRADE_FLAG_START);
 	
-	// set up connection
-	upgrade->conn->type = ESPCONN_TCP;
-	upgrade->conn->state = ESPCONN_NONE;
-	upgrade->conn->proto.tcp->local_port = espconn_port();
-	upgrade->conn->proto.tcp->remote_port = OTA_PORT;
-	*(uint32*)upgrade->conn->proto.tcp->remote_ip = *(uint32*)ip;
-	// set connection call backs
-	espconn_regist_connectcb(upgrade->conn, upgrade_connect_cb);
-	espconn_regist_reconcb(upgrade->conn, upgrade_recon_cb);
-
-	// try to connect
-	espconn_connect(upgrade->conn);
-
-	// set connection timeout timer
-	os_timer_disarm(&ota_timer);
-	os_timer_setfn(&ota_timer, (os_timer_func_t *)connect_timeout_cb, 0);
-	os_timer_arm(&ota_timer, OTA_NETWORK_TIMEOUT, 0);
-
+	// dns lookup
+	result = espconn_gethostbyname(upgrade->conn, OTA_HOST, &upgrade->ip, upgrade_resolved);
+	if (result == ESPCONN_OK) {
+		// hostname is already cached or is actually a dotted decimal ip address
+		upgrade_resolved(0, &upgrade->ip, upgrade->conn);
+	} else if (result == ESPCONN_INPROGRESS) {
+		// lookup taking place, will call upgrade_resolved on completion
+	} else {
+		uart0_send("DNS error!\r\n");
+		os_free(upgrade->conn->proto.tcp);
+		os_free(upgrade->conn);
+		os_free(upgrade);
+		return false;
+	}
+	
 	return true;
 }
 
