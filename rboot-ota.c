@@ -38,14 +38,14 @@ static os_timer_t ota_timer;
 // clean up at the end of the update
 // will call the user call back to indicate completion
 void ICACHE_FLASH_ATTR rboot_ota_deinit() {
-	
+
 	bool result;
 	uint8 rom_slot;
 	ota_callback callback;
 	struct espconn *conn;
-	
+
 	os_timer_disarm(&ota_timer);
-	
+
 	// save only remaining bits of interest from upgrade struct
 	// then we can clean it up early, so disconnect callback
 	// can distinguish between us calling it after update finished
@@ -53,14 +53,14 @@ void ICACHE_FLASH_ATTR rboot_ota_deinit() {
 	conn = upgrade->conn;
 	rom_slot = upgrade->rom_slot;
 	callback = upgrade->callback;
-	
+
 	// clean up
 	os_free(upgrade);
 	upgrade = 0;
-	
+
 	// if connected, disconnect and clean up connection
 	if (conn) espconn_disconnect(conn);
-	
+
 	// check for completion
 	if (system_upgrade_flag_check() == UPGRADE_FLAG_FINISH) {
 		result = true;
@@ -68,29 +68,29 @@ void ICACHE_FLASH_ATTR rboot_ota_deinit() {
 		system_upgrade_flag_set(UPGRADE_FLAG_IDLE);
 		result = false;
 	}
-	
+
 	// call user call back
 	if (callback) {
 		callback(result, rom_slot);
 	}
-	
+
 }
 
 // called when connection receives data (hopefully the rom)
 static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned short length) {
-	
+
 	char *ptrData, *ptrLen, *ptr;
-	
+
 	// disarm the timer
 	os_timer_disarm(&ota_timer);
-	
+
 	// first reply?
 	if (upgrade->content_len == 0) {
 		// valid http response?
 		if ((ptrLen = (char*)os_strstr(pusrdata, "Content-Length: "))
 			&& (ptrData = (char*)os_strstr(ptrLen, "\r\n\r\n"))
 			&& (os_strncmp(pusrdata + 9, "200", 3) == 0)) {
-			
+
 			// end of header/start of data
 			ptrData += 4;
 			// length of data after header in this chunk
@@ -114,7 +114,7 @@ static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned
 		upgrade->total_len += length;
 		rboot_write_flash(&upgrade->write_status, (uint8*)pusrdata, length);
 	}
-	
+
 	// check if we are finished
 	if (upgrade->total_len == upgrade->content_len) {
 		system_upgrade_flag_set(UPGRADE_FLAG_FINISH);
@@ -135,7 +135,7 @@ static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned
 static void ICACHE_FLASH_ATTR upgrade_disconcb(void *arg) {
 	// use passed ptr, as upgrade struct may have gone by now
 	struct espconn *conn = (struct espconn*)arg;
-	
+
 	os_timer_disarm(&ota_timer);
 	if (conn) {
 		if (conn->proto.tcp) {
@@ -143,14 +143,14 @@ static void ICACHE_FLASH_ATTR upgrade_disconcb(void *arg) {
 		}
 		os_free(conn);
 	}
-	
+
 	// is upgrade struct still around?
 	// if so disconnect was from remote end, or we called
 	// ourselves to cleanup a failed connection attempt
 	// must ensure disconnect was for this upgrade attempt,
 	// not a previous one! this call back is async so another
 	// upgrade struct may have been created already
-	if (upgrade && upgrade->conn == conn) {
+	if (upgrade && (upgrade->conn == conn)) {
 		// mark connection as gone
 		upgrade->conn = 0;
 		// end the update process
@@ -160,16 +160,16 @@ static void ICACHE_FLASH_ATTR upgrade_disconcb(void *arg) {
 
 // successfully connected to update server, send the request
 static void ICACHE_FLASH_ATTR upgrade_connect_cb(void *arg) {
-	
+
 	uint8 *request;
-	
+
 	// disable the timeout
 	os_timer_disarm(&ota_timer);
-	
+
 	// register connection callbacks
 	espconn_regist_disconcb(upgrade->conn, upgrade_disconcb);
 	espconn_regist_recvcb(upgrade->conn, upgrade_recvcb);
-	
+
 	// http request string
 	request = (uint8 *)os_malloc(512);
 	if (!request) {
@@ -180,7 +180,7 @@ static void ICACHE_FLASH_ATTR upgrade_connect_cb(void *arg) {
 	os_sprintf((char*)request,
 		"GET /%s HTTP/1.1\r\nHost: " OTA_HOST "\r\n" HTTP_HEADER,
 		(upgrade->rom_slot == FLASH_BY_ADDR ? OTA_FILE : (upgrade->rom_slot == 0 ? OTA_ROM0 : OTA_ROM1)));
-	
+
 	// send the http request, with timeout for reply
 	os_timer_setfn(&ota_timer, (os_timer_func_t *)rboot_ota_deinit, 0);
 	os_timer_arm(&ota_timer, OTA_NETWORK_TIMEOUT, 0);
@@ -235,7 +235,7 @@ static void ICACHE_FLASH_ATTR upgrade_recon_cb(void *arg, sint8 errType) {
 
 // call back for dns lookup
 static void ICACHE_FLASH_ATTR upgrade_resolved(const char *name, ip_addr_t *ip, void *arg) {
-	
+
 	if (ip == 0) {
 		uart0_send("DNS lookup failed for: ");
 		uart0_send(OTA_HOST);
@@ -245,7 +245,7 @@ static void ICACHE_FLASH_ATTR upgrade_resolved(const char *name, ip_addr_t *ip, 
 		upgrade_disconcb(upgrade->conn);
 		return;
 	}
-	
+
 	// set up connection
 	upgrade->conn->type = ESPCONN_TCP;
 	upgrade->conn->state = ESPCONN_NONE;
@@ -255,10 +255,10 @@ static void ICACHE_FLASH_ATTR upgrade_resolved(const char *name, ip_addr_t *ip, 
 	// set connection call backs
 	espconn_regist_connectcb(upgrade->conn, upgrade_connect_cb);
 	espconn_regist_reconcb(upgrade->conn, upgrade_recon_cb);
-	
+
 	// try to connect
 	espconn_connect(upgrade->conn);
-	
+
 	// set connection timeout timer
 	os_timer_disarm(&ota_timer);
 	os_timer_setfn(&ota_timer, (os_timer_func_t *)connect_timeout_cb, 0);
@@ -271,22 +271,22 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 	uint8 slot;
 	rboot_config bootconf;
 	err_t result;
-	
+
 	// check not already updating
 	if (system_upgrade_flag_check() == UPGRADE_FLAG_START) {
 		return false;
 	}
-	
+
 	// create upgrade status structure
 	upgrade = (upgrade_status*)os_zalloc(sizeof(upgrade_status));
 	if (!upgrade) {
 		uart0_send("No ram!\r\n");
 		return false;
 	}
-	
+
 	// store the callback
 	upgrade->callback = callback;
-	
+
 	// get details of rom slot to update
 	bootconf = rboot_get_config();
 	slot = bootconf.current_rom;
@@ -297,10 +297,10 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 	upgrade->write_status = rboot_write_init(bootconf.roms[upgrade->rom_slot]);
 	// to flash a file (e.g. containing a filesystem) to an arbitrary location
 	// (e.g. 0x40000 bytes after the start of the rom) use code this like instead:
-	//upgrade->rom_slot = FLASH_BY_ADDR;
-	//upgrade->write_status = rboot_write_init(bootconf.roms[upgrade->rom_slot] + 0x40000);
 	// Note: address must be start of a sector (multiple of 4k)!
-	
+	//upgrade->write_status = rboot_write_init(bootconf.roms[upgrade->rom_slot] + 0x40000);
+	//upgrade->rom_slot = FLASH_BY_ADDR;
+
 	// create connection
 	upgrade->conn = (struct espconn *)os_zalloc(sizeof(struct espconn));
 	if (!upgrade->conn) {
@@ -315,10 +315,10 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 		os_free(upgrade);
 		return false;
 	}
-	
+
 	// set update flag
 	system_upgrade_flag_set(UPGRADE_FLAG_START);
-	
+
 	// dns lookup
 	result = espconn_gethostbyname(upgrade->conn, OTA_HOST, &upgrade->ip, upgrade_resolved);
 	if (result == ESPCONN_OK) {
@@ -333,7 +333,7 @@ bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback) {
 		os_free(upgrade);
 		return false;
 	}
-	
+
 	return true;
 }
 
