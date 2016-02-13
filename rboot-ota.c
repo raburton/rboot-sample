@@ -98,7 +98,11 @@ static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned
 			// running total of download length
 			upgrade->total_len += length;
 			// process current chunk
-			rboot_write_flash(&upgrade->write_status, (uint8*)ptrData, length);
+			if (!rboot_write_flash(&upgrade->write_status, (uint8*)ptrData, length)) {
+				// write error
+				rboot_ota_deinit();
+				return;
+			}
 			// work out total download size
 			ptrLen += 16;
 			ptr = (char *)os_strstr(ptrLen, "\r\n");
@@ -112,7 +116,11 @@ static void ICACHE_FLASH_ATTR upgrade_recvcb(void *arg, char *pusrdata, unsigned
 	} else {
 		// not the first chunk, process it
 		upgrade->total_len += length;
-		rboot_write_flash(&upgrade->write_status, (uint8*)pusrdata, length);
+		if (!rboot_write_flash(&upgrade->write_status, (uint8*)pusrdata, length)) {
+			// write error
+			rboot_ota_deinit();
+			return;
+		}
 	}
 
 	// check if we are finished
