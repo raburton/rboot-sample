@@ -103,6 +103,44 @@ void ICACHE_FLASH_ATTR Switch() {
 	system_restart();
 }
 
+#ifdef BOOT_RTC_ENABLED
+void ICACHE_FLASH_ATTR ShowMode() {
+	char msg[50];
+	rboot_rtc_data rtc;
+
+	if (rboot_get_rtc_data(&rtc)) {
+		os_sprintf(msg, "Last boot mode: %d ", rtc.last_mode);
+		uart0_send(msg);
+		if (rtc.last_mode == MODE_STANDARD) {
+			uart0_send("(normal)\r\n");
+		} else if (rtc.last_mode == MODE_GPIO_ROM) {
+			uart0_send("(gpio)\r\n");
+		} else if (rtc.last_mode == MODE_TEMP_ROM) {
+			uart0_send("(temp)\r\n");
+		} else {
+			uart0_send("(unknown!)\r\n");
+		}
+
+		os_sprintf(msg, "Last boot rom: %d\r\n", rtc.last_rom);
+		uart0_send(msg);
+	} else {
+		uart0_send("rBoot rtc boot data not available.\r\n");
+	}
+}
+
+void ICACHE_FLASH_ATTR TempSwitch() {
+	char msg[50];
+	uint8 before, after;
+	before = rboot_get_current_rom();
+	if (before == 0) after = 1; else after = 0;
+	os_sprintf(msg, "Rebooting to rom %d (from rom %d).\r\n", after, before);
+	uart0_send(msg);
+	rboot_set_temp_rom(after);
+	uart0_send("Restarting...\r\n\r\n");
+	system_restart();
+}
+#endif
+
 static void ICACHE_FLASH_ATTR OtaUpdate_CallBack(bool result, uint8 rom_slot) {
 
 	if(result == true) {
@@ -142,6 +180,10 @@ void ICACHE_FLASH_ATTR ProcessCommand(char* str) {
 		uart0_send("  connect - connect to wifi\r\n");
 		uart0_send("  restart - restart the esp8266\r\n");
 		uart0_send("  switch - switch to the other rom and reboot\r\n");
+#ifdef BOOT_RTC_ENABLED
+		uart0_send("  temp - temp switch to the other rom and reboot\r\n");
+		uart0_send("  mode - show last boot mode\r\n");
+#endif
 		uart0_send("  ota - perform ota update, switch rom and reboot\r\n");
 		uart0_send("  info - show esp8266 info\r\n");
 		uart0_send("\r\n");
@@ -158,17 +200,36 @@ void ICACHE_FLASH_ATTR ProcessCommand(char* str) {
 		ShowIP();
 	} else if (!strcmp(str, "info")) {
 		ShowInfo();
+#ifdef BOOT_RTC_ENABLED
+	} else if (!strcmp(str, "temp")) {
+		TempSwitch();
+	} else if (!strcmp(str, "mode")) {
+		ShowMode();
+#endif
 	}
 }
 
 void ICACHE_FLASH_ATTR user_init(void) {
 
+	uint8 rom;
 	char msg[50];
 
 	uart_init(BIT_RATE_115200,BIT_RATE_115200);
 	uart0_send("\r\n\r\nrBoot Sample Project\r\n");
-	os_sprintf(msg, "\r\nCurrently running rom %d.\r\n", rboot_get_current_rom());
+	uart0_send("\r\nCurrently running rom ");
+
+#ifdef BOOT_RTC_ENABLED
+	if (rboot_get_last_boot_rom(&rom)) {
+		os_sprintf(msg, "%d.\r\n", rom);
+		uart0_send(msg);
+	} else {
+		uart0_send("(rBoot rtc data unavailable)\r\n");
+	}
+#else
+	rom = rboot_get_current_rom();
+	os_sprintf(msg, "%d.\r\n", rom);
 	uart0_send(msg);
+#endif
 
 	uart0_send("type \"help\" and press <enter> for help...\r\n");
 
