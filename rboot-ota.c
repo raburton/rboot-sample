@@ -186,7 +186,7 @@ static void ICACHE_FLASH_ATTR upgrade_connect_cb(void *arg) {
 		return;
 	}
 	os_sprintf((char*)request,
-		"GET /%s HTTP/1.1\r\nHost: " OTA_HOST "\r\n" HTTP_HEADER,
+		"GET /%s HTTP/1.0\r\nHost: " OTA_HOST "\r\n" HTTP_HEADER,
 		(upgrade->rom_slot == FLASH_BY_ADDR ? OTA_FILE : (upgrade->rom_slot == 0 ? OTA_ROM0 : OTA_ROM1)));
 
 	// send the http request, with timeout for reply
