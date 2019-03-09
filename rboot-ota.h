@@ -38,7 +38,7 @@ Accept: */*\r\n\r\n"
 #define FLASH_BY_ADDR 0xff
 
 // callback method should take this format
-typedef void (*ota_callback)(bool result, uint8 rom_slot);
+typedef void (*ota_callback)(bool result, uint8_t rom_slot);
 
 // function to perform the ota update
 bool ICACHE_FLASH_ATTR rboot_ota_start(ota_callback callback);

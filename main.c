@@ -5,7 +5,6 @@
 // See license.txt for license terms.
 //////////////////////////////////////////////////
 
-#include <c_types.h>
 #include <osapi.h>
 #include <user_interface.h>
 #include <time.h>
@@ -46,8 +45,8 @@ void ICACHE_FLASH_ATTR wifi_config_station() {
 
 	wifi_set_opmode(0x1);
 	stationConf.bssid_set = 0;
-	os_strcpy(&stationConf.ssid, WIFI_SSID, os_strlen(WIFI_SSID));
-	os_strcpy(&stationConf.password, WIFI_PWD, os_strlen(WIFI_PWD));
+	os_strncpy((char*)&stationConf.ssid, WIFI_SSID, os_strlen(WIFI_SSID));
+	os_strncpy((char*)&stationConf.password, WIFI_PWD, os_strlen(WIFI_PWD));
 	wifi_station_set_config(&stationConf);
 	uart0_send("wifi connecting...\r\n");
 	wifi_station_connect();
@@ -93,7 +92,7 @@ void ICACHE_FLASH_ATTR ShowInfo() {
 
 void ICACHE_FLASH_ATTR Switch() {
 	char msg[50];
-	uint8 before, after;
+	uint8_t before, after;
 	before = rboot_get_current_rom();
 	if (before == 0) after = 1; else after = 0;
 	os_sprintf(msg, "Swapping from rom %d to rom %d.\r\n", before, after);
@@ -103,7 +102,7 @@ void ICACHE_FLASH_ATTR Switch() {
 	system_restart();
 }
 
-static void ICACHE_FLASH_ATTR OtaUpdate_CallBack(bool result, uint8 rom_slot) {
+static void ICACHE_FLASH_ATTR OtaUpdate_CallBack(bool result, uint8_t rom_slot) {
 
 	if(result == true) {
 		// success

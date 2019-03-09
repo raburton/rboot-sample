@@ -17,10 +17,10 @@ To compile
 7) Flash, as below.
 8) Connect a terminal and type 'help'.
 
-All the above are available from GitHub: https://github.com/raburton/esp8266
+All the above are available from GitHub: https://github.com/raburton
 
 Once built simply flash with something like this:
   esptool.py --port COM2 write_flash -fs 8m 0x00000 rboot.bin 0x02000 rom0.bin 0x82000 rom1.bin 0xfc000 blank4.bin
 
-Tested with SDK v1.3 on an ESP12 (if using a board with less than 1mb of flash
-a change to the second linker script will be required).
+Tested with SDK v2.2 on an ESP12 (if using a board with less than 1mb of flash
+a change to the second linker script (rom1.ld) will be required).
